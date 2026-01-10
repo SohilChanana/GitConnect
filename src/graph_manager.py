@@ -414,7 +414,7 @@ class GraphManager:
         MATCH (fn:Function)
         WHERE fn.name CONTAINS $name
         RETURN fn.name AS name, fn.file_path AS file_path, 
-               fn.start_line AS start_line, fn.parent_class AS parent_class
+               fn.start_line AS start_line, fn.end_line AS end_line, fn.parent_class AS parent_class
         """
         with self.session() as session:
             result = session.run(query, name=name)

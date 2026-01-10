@@ -165,6 +165,7 @@ class CodeParser:
             start_line=node.start_point[0] + 1,  # Convert to 1-indexed
             end_line=node.end_point[0] + 1,
             docstring=docstring,
+            content=self._get_node_text(node, source_bytes),
         )
         result.classes.append(class_node)
 
@@ -216,6 +217,7 @@ class CodeParser:
             end_line=node.end_point[0] + 1,
             parent_class=parent_class,
             docstring=docstring,
+            content=self._get_node_text(node, source_bytes),
             parameters=params,
         )
         result.functions.append(func_node)
@@ -445,6 +447,7 @@ class CodeParser:
             file_path=file_path,
             start_line=node.start_point[0] + 1,
             end_line=node.end_point[0] + 1,
+            content=self._get_node_text(node, source_bytes),
         )
         result.classes.append(class_node)
 
@@ -489,6 +492,7 @@ class CodeParser:
             start_line=node.start_point[0] + 1,
             end_line=node.end_point[0] + 1,
             parent_class=parent_class,
+            content=self._get_node_text(node, source_bytes),
             parameters=params,
         )
         result.functions.append(func_node)
@@ -530,6 +534,7 @@ class CodeParser:
             start_line=node.start_point[0] + 1,
             end_line=node.end_point[0] + 1,
             parent_class=parent_class,
+            content=self._get_node_text(node, source_bytes),
             parameters=params,
         )
         result.functions.append(func_node)

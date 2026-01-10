@@ -28,6 +28,7 @@ from src.config import get_settings
 from src.github_fetcher import GitHubFetcher, GitHubFetchError, fetch_repository
 from src.parser import CodeParser, parse_repository
 from src.graph_manager import GraphManager, GraphConnectionError
+from src.moorcheh_manager import MoorchehManager
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +55,15 @@ async def lifespan(app: FastAPI):
     
     # Initialize graph manager
     app.state.graph_manager = GraphManager()
+    
+    # Initialize Moorcheh manager
+    try:
+        app.state.moorcheh_manager = MoorchehManager()
+    except Exception as e:
+        logger.error(f"Failed to initialize MoorchehManager: {e}")
+        # We can continue, but vector search will fail
+        app.state.moorcheh_manager = None
+        
     try:
         app.state.graph_manager.connect()
         app.state.graph_manager.setup_schema()
@@ -63,6 +73,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize LangChain components
     app.state.embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-small",
         openai_api_key=settings.openai_api_key,
     )
     app.state.llm = ChatOpenAI(
@@ -232,7 +243,115 @@ async def ingest_repository(request: IngestRequest, background_tasks: Background
                 
                 # Ingest into graph
                 logger.info(f"Ingesting parse results for {name} into Neo4j...")
-                return graph_manager.ingest_parse_result(result, name)
+                stats = graph_manager.ingest_parse_result(result, name)
+                
+                # ---------------------------------------------------------
+                # Moorcheh Integration: Vector Embeddings
+                # ---------------------------------------------------------
+                try:
+                    moorcheh_manager: MoorchehManager = app.state.moorcheh_manager
+                    if moorcheh_manager:
+                        logger.info("Generating and uploading vector embeddings to Moorcheh...")
+                        namespace_name = f"gitconnect-{name.replace('/', '-').lower()}"
+                        
+                        # Ensure namespace exists
+                        moorcheh_manager.setup_namespace(namespace_name)
+                        
+                        # Prepare entities for embedding
+                        entities_to_embed = []
+                        texts_to_embed = []
+                        
+                        # Collect Functions
+                        for func in result.functions:
+                            # Rich Contextual Representation
+                            rich_text = (
+                                f"File: {func.file_path}\n"
+                                f"Type: Function\n"
+                                f"Name: {func.name}\n"
+                                f"Docstring: {func.docstring or ''}\n"
+                                f"Parent Class: {func.parent_class or 'None'}\n"
+                                f"\n{func.content}"  # Assuming content isn't too massive; maybe truncate if needed
+                            )
+                            # Truncate content if massive to avoid token limits (optional basic safety)
+                            if len(rich_text) > 8000:
+                                rich_text = rich_text[:8000] + "...(truncated)"
+                                
+                            item_id = moorcheh_manager.generate_id(func.file_path, func.name)
+                            
+                            # Truncate content for metadata storage (Moorcheh/Vectors usually handle large text, but let's be safe)
+                            # 15000 chars is roughly 3-4k tokens.
+                            stored_content = func.content[:15000] if func.content else ""
+                            
+                            entities_to_embed.append({
+                                "id": item_id,
+                                "type": "Function",
+                                "name": func.name,
+                                "file_path": func.file_path,
+                                "qualified_name": func.qualified_name,
+                                "content": stored_content # Store content for retrieval
+                            })
+                            texts_to_embed.append(rich_text)
+                            
+                        # Collect Classes
+                        for cls in result.classes:
+                            rich_text = (
+                                f"File: {cls.file_path}\n"
+                                f"Type: Class\n"
+                                f"Name: {cls.name}\n"
+                                f"Docstring: {cls.docstring or ''}\n"
+                            )
+                            item_id = moorcheh_manager.generate_id(cls.file_path, cls.name)
+                            
+                            # Truncate content for metadata storage
+                            stored_content = cls.content[:15000] if cls.content else ""
+                            
+                            entities_to_embed.append({
+                                "id": item_id,
+                                "type": "Class",
+                                "name": cls.name,
+                                "file_path": cls.file_path,
+                                "qualified_name": cls.qualified_name,
+                                "content": stored_content 
+                            })
+                            # Append docstring specifically if needed or just rely on content
+                            texts_to_embed.append(rich_text)
+                        
+                        # Generate Embeddings (Batched by langchain usually, but we pass all)
+                        # Ensure we have texts
+                        if texts_to_embed:
+                            logger.info(f"Embedding {len(texts_to_embed)} items...")
+                            embeddings: OpenAIEmbeddings = app.state.embeddings
+                            vectors = embeddings.embed_documents(texts_to_embed)
+                            
+                            # Combine for upload
+                            upload_items = []
+                            for i, vector in enumerate(vectors):
+                                ent = entities_to_embed[i]
+                                upload_items.append({
+                                    "id": ent["id"],
+                                    "vector": vector,
+                                    "metadata": ent # pass all metadata fields
+                                })
+                            
+                            # Upload
+                            moorcheh_manager.upload_entities(upload_items, namespace_name)
+                            
+                            stats["vectors_uploaded"] = len(upload_items)
+                        else:
+                            logger.info("No entities found to embed.")
+                            
+                except Exception as e:
+                    err_msg = f"Moorcheh integration failed during ingestion: {e}"
+                    logger.error(err_msg)
+                    try:
+                        with open("ingest_error.log", "a") as f:
+                            f.write(f"{err_msg}\n")
+                    except:
+                        pass
+                    # Don't fail the whole ingest just for vectors, or do?
+                    # Let's log and continue
+                
+                return stats
 
         # Run in thread pool to avoid blocking main loop
         loop = asyncio.get_running_loop()
@@ -265,8 +384,16 @@ async def delete_repository(repo_name: str):
     """Delete a repository from the knowledge graph."""
     graph_manager: GraphManager = app.state.graph_manager
     try:
+        # Delete from Neo4j
         graph_manager.delete_repository(repo_name)
-        return {"status": "success", "message": f"Repository '{repo_name}' deleted"}
+        
+        # Delete from Moorcheh (Vectors + Content)
+        moorcheh_manager: MoorchehManager = app.state.moorcheh_manager
+        if moorcheh_manager:
+            namespace_name = f"gitconnect-{repo_name.replace('/', '-').lower()}"
+            moorcheh_manager.delete_namespace(namespace_name)
+            
+        return {"status": "success", "message": f"Repository '{repo_name}' deleted from Graph and Moorcheh"}
     except Exception as e:
         logger.error(f"Deletion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -287,21 +414,56 @@ async def analyze_impact(request: AnalyzeRequest):
     llm: ChatOpenAI = app.state.llm
     neo4j_graph: Optional[Neo4jGraph] = app.state.neo4j_graph
     
+    # Define primary namespace (defaulting to psf-requests for this task context)
+    primary_namespace = "gitconnect-psf-requests"
+    
     try:
         relevant_entities = []
         dependencies = []
         cypher_query = None
+        truncation_warning = None
         
         # Step 1: Vector search for relevant entities (if enabled)
         if request.use_vector_search:
             try:
-                query_embedding = embeddings.embed_query(request.query)
-                vector_results = graph_manager.vector_search(
-                    query_embedding, 
-                    node_type="Function",
-                    top_k=5,
-                )
-                relevant_entities.extend(vector_results)
+                moorcheh_manager: MoorchehManager = app.state.moorcheh_manager
+                if moorcheh_manager:
+                    logger.info(f"Performing vector search for: '{request.query}'")
+                    query_embedding = embeddings.embed_query(request.query)
+                    
+                    # Search across known namespaces? Or just search all?
+                    # For now, we need to know the namespace. 
+                    # Assuming we know which repo we are analyzing, or we search a "default" one?
+                    # The current request doesn't specify repo!
+                    # Currently strict GraphRAG usually implies context.
+                    # Let's assume we search namespaces matching 'gitconnect-*' or we ask user for repo?
+                    # For this Hackathon implementation, we might need to iterate or stick to one.
+                    # Let's list namespaces and search them?
+                    # Or simpler: Is there a way to search *all*?
+                    # Moorcheh might support it. If not, we iterate known namespaces from Neo4j?
+                    
+                    # For efficiency in this demo, let's fetch unique repo_names from graph manager
+                    # and search those namespaces.
+                    repos = graph_manager.execute_cypher("MATCH (f:File) RETURN DISTINCT f.repo_name as repo")
+                    repo_names = [r['repo'] for r in repos]
+                    
+                    all_vector_results = []
+                    for r_name in repo_names:
+                        ns_name = f"gitconnect-{r_name.replace('/', '-').lower()}"
+                        results = moorcheh_manager.search(
+                            query_embedding, 
+                            namespace_name=ns_name,
+                            top_k=5
+                        )
+                        all_vector_results.extend(results)
+                    
+                    # Sort combined results by score if available and take top 5 overall
+                    # Moorcheh results usually have 'score' or similar
+                    all_vector_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+                    relevant_entities.extend(all_vector_results[:5])
+                    
+                else:
+                    logger.warning("MoorchehManager not initialized, skipping vector search")
             except Exception as e:
                 logger.warning(f"Vector search failed: {e}")
         
@@ -340,6 +502,7 @@ async def analyze_impact(request: AnalyzeRequest):
 Instructions:
 Use only the provided relationship types and properties in the schema.
 Do not use any other relationship types or properties that are not provided.
+IMPORTANT: When searching for Python functions or classes, if the user provides space-separated words (e.g. "proxy manager"), ALSO try searching for the snake_case version (e.g. "proxy_manager") using OR logic in the WHERE clause.
 Schema:
 {schema}
 Note: Do not include any explanations or apologies in your responses.
@@ -383,7 +546,94 @@ The question is:
             except Exception as e:
                 logger.warning(f"GraphCypherQAChain failed: {e}")
         
-        # Step 4: Generate summary using LLM
+
+        
+        # Format the data for the prompt
+        # Format the data for the prompt
+        entities_str_list = []
+        for e in relevant_entities[:10]:
+            name = e.get('name', 'N/A')
+            fpath = e.get('file_path', 'N/A')
+            etype = e.get('type', 'Unknown')
+            
+            content = ""
+            meta = e.get('metadata', {})
+            # 1. Try Moorcheh Metadata
+            if isinstance(meta, dict) and 'content' in meta:
+                content = meta['content']
+            elif 'content' in e and e['content']: # 2. Try Entity Dict (e.g. from previous logic)
+                content = e['content']
+            
+            # 3. Fetch content from Moorcheh (since files are deleted)
+            if not content and fpath != 'N/A' and moorcheh_manager and moorcheh_manager.client:
+                 try:
+                      # Default namespace for now, or derive from known repo
+                      # We assume single repo context for this task: 'psf/requests'
+                      entity_namespace = "gitconnect-psf-requests"
+
+                      if embeddings:
+                           name_vector = embeddings.embed_query(name)
+                           content = moorcheh_manager.fetch_content(
+                               file_path=fpath, 
+                               entity_name=name,
+                               namespace_name=entity_namespace,
+                               query_vector=name_vector
+                           )
+                 except Exception as fetch_err:
+                      logger.warning(f"Failed to fetch content from Moorcheh for {name}: {fetch_err}")
+
+            # Truncate content for prompt
+            if content:
+                content_snippet = f"\nCode:\n```\n{content[:2000]}...\n```"
+            else:
+                content_snippet = " (Code content not available)"
+                
+            entities_str_list.append(f"- {etype}: {name} in {fpath}{content_snippet}")
+
+        entities_str = "\n".join(entities_str_list) or "No entities found"
+        
+        # Format dependencies
+        deps_str = "\n".join([
+            f"- {d.get('type', 'Unknown')}: {d.get('name', 'N/A')} (line {d.get('line', 'N/A')})"
+            for d in dependencies[:20]  # Limit to avoid token overflow
+        ]) or "No dependencies found"
+        
+        # Build Context for Moorcheh
+        structural_context = f"""
+Structural Analysis (Graph):
+Entities Found:
+{entities_str}
+
+Dependencies:
+{deps_str}
+
+Graph Query Insights:
+{cypher_query if cypher_query else 'N/A'}
+"""
+        # Step 4: Generate Answer using Moorcheh AI
+        if moorcheh_manager and moorcheh_manager.client and primary_namespace:
+             try:
+                  logger.info("Generating answer via Moorcheh...")
+                  response = moorcheh_manager.client.answer.generate(
+                       namespace=primary_namespace,
+                       query=request.query,
+                       top_k=5, # Allow Moorcheh to find its own context too
+                       header_prompt=f"You are a code analysis assistant. Use the provided context and the following structural analysis to answer.\n\n{structural_context}"
+                  )
+                  return {
+                       "query": request.query,
+                       "answer": response['answer'],
+                       "cypher_query": cypher_query,
+                       "relevant_entities": relevant_entities[:10],
+                       "dependencies": dependencies[:20],
+                       "truncation_warning": truncation_warning
+                  }
+             except Exception as gen_err:
+                  logger.error(f"Moorcheh generation failed: {gen_err}")
+                  # Fallback to local LLM if Moorcheh fails
+                  pass
+
+        # Fallback: Local LLM (if Moorcheh not avail or failed)
         summary_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a helpful code analysis assistant.
             
@@ -414,21 +664,10 @@ Graph Query Result:
 Please provide the answer.""")
         ])
         
-        # Format the data for the prompt
-        entities_str = "\n".join([
-            f"- {e.get('type', 'Unknown')}: {e.get('name', 'N/A')} in {e.get('file_path', 'N/A')}"
-            for e in relevant_entities[:10]  # Limit to avoid token overflow
-        ]) or "No entities found"
-        
-        deps_str = "\n".join([
-            f"- {d.get('type', 'Unknown')}: {d.get('name', 'N/A')} (line {d.get('line', 'N/A')})"
-            for d in dependencies[:20]  # Limit to avoid token overflow
-        ]) or "No dependencies found"
-        
         chain_result_str = str(chain_result.get("result", "")) if chain_result else "N/A"
         
         # Generate summary
-        if 'truncation_warning' in locals() and truncation_warning:
+        if truncation_warning:
              chain_result_str += f"\n\nWARNING: {truncation_warning}"
 
         messages = summary_prompt.format_messages(
@@ -440,14 +679,14 @@ Please provide the answer.""")
         
         summary = llm.invoke(messages)
         
-        return AnalyzeResponse(
-            query=request.query,
-            answer=summary.content,
-            cypher_query=cypher_query,
-            relevant_entities=relevant_entities[:10],
-            dependencies=dependencies[:20],
-            truncation_warning=truncation_warning if 'truncation_warning' in locals() else None,
-        )
+        return {
+            "query": request.query,
+            "answer": summary.content,
+            "cypher_query": cypher_query,
+            "relevant_entities": relevant_entities[:10],
+            "dependencies": dependencies[:20],
+            "truncation_warning": truncation_warning if 'truncation_warning' in locals() else None,
+        }
         
     except GraphConnectionError as e:
         logger.error(f"Graph connection error: {e}")

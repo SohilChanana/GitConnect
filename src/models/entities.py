@@ -35,6 +35,7 @@ class ClassNode(BaseModel):
     start_line: int = Field(..., ge=1, description="Starting line number")
     end_line: int = Field(..., ge=1, description="Ending line number")
     docstring: Optional[str] = Field(None, description="Class docstring if present")
+    content: Optional[str] = Field(None, description="Source code content")
     
     @property
     def node_id(self) -> str:
@@ -58,6 +59,7 @@ class FunctionNode(BaseModel):
         None, description="Parent class name if this is a method"
     )
     docstring: Optional[str] = Field(None, description="Function docstring if present")
+    content: Optional[str] = Field(None, description="Source code content")
     parameters: list[str] = Field(
         default_factory=list, description="List of parameter names"
     )

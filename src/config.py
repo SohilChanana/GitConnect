@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # OpenAI API
     openai_api_key: str
 
+    # Moorcheh API
+    moorcheh_api_key: str
+
     # GitHub (optional)
     github_token: Optional[str] = None
 
