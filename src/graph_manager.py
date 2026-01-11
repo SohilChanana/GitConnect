@@ -414,7 +414,8 @@ class GraphManager:
         MATCH (fn:Function)
         WHERE fn.name CONTAINS $name
         RETURN fn.name AS name, fn.file_path AS file_path, 
-               fn.start_line AS start_line, fn.end_line AS end_line, fn.parent_class AS parent_class
+               fn.start_line AS start_line, fn.end_line AS end_line, fn.parent_class AS parent_class,
+               fn.repo_name AS repo_name
         """
         with self.session() as session:
             result = session.run(query, name=name)
@@ -426,7 +427,8 @@ class GraphManager:
         MATCH (c:Class)
         WHERE c.name CONTAINS $name
         RETURN c.name AS name, c.file_path AS file_path,
-               c.start_line AS start_line, c.end_line AS end_line
+               c.start_line AS start_line, c.end_line AS end_line,
+               c.repo_name AS repo_name
         """
         with self.session() as session:
             result = session.run(query, name=name)
@@ -437,7 +439,7 @@ class GraphManager:
         query = """
         MATCH (f:File)
         WHERE f.path CONTAINS $name
-        RETURN f.path AS file_path, f.language AS language
+        RETURN f.path AS file_path, f.language AS language, f.repo_name AS repo_name
         """
         with self.session() as session:
             result = session.run(query, name=name)

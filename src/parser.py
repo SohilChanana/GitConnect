@@ -367,10 +367,10 @@ class CodeParser:
     # =========================================================================
 
     def _parse_javascript(
-        self, file_path: Path, source_bytes: bytes, relative_path: str
+        self, file_path: Path, source_bytes: bytes, relative_path: str, language: str = "javascript"
     ) -> ParseResult:
-        """Parse a JavaScript file."""
-        parser = self._get_parser("javascript")
+        """Parse a JavaScript/TypeScript file."""
+        parser = self._get_parser(language)
         tree = parser.parse(source_bytes)
         root = tree.root_node
 
@@ -730,7 +730,7 @@ class CodeParser:
         if language == "python":
             return self._parse_python(file_path, source_bytes, relative_path)
         elif language in {"javascript", "typescript"}:
-            return self._parse_javascript(file_path, source_bytes, relative_path)
+            return self._parse_javascript(file_path, source_bytes, relative_path, language)
         else:
             return ParseResult()
 

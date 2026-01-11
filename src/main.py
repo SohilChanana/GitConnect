@@ -217,20 +217,29 @@ async def ingest_repository(request: IngestRequest, background_tasks: Background
     graph_manager: GraphManager = app.state.graph_manager
     
     try:
-        # Clear existing graph if requested
-        if request.clear_existing:
-            logger.info("Clearing existing graph...")
-            graph_manager.clear_graph()
-        
-        # Clone repository
-        logger.info(f"Cloning repository: {request.repo_url}")
-        
-        # Extract repo name
+        # Extract repo name first
         if "github.com/" in request.repo_url:
             parts = request.repo_url.split("github.com/")[-1].replace(".git", "").split("/")
             repo_name = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
         else:
             repo_name = request.repo_url.split("/")[-1].replace(".git", "")
+
+        # Clear existing graph if requested
+        if request.clear_existing:
+            logger.info("Clearing existing graph...")
+            graph_manager.clear_graph()
+            
+            # Use app.state to get manager if available
+            moorcheh_manager = getattr(app.state, "moorcheh_manager", None)
+            if moorcheh_manager:
+                namespace_name = f"gitconnect-{repo_name.replace('/', '-').lower()}"
+                logger.info(f"Clearing existing Moorcheh namespace '{namespace_name}'...")
+                moorcheh_manager.delete_namespace(namespace_name)
+        
+        # Clone repository
+        logger.info(f"Cloning repository: {request.repo_url}")
+        
+
             
         # Define blocking task wrapper
         def process_repository(url: str, name: str):
@@ -334,7 +343,7 @@ async def ingest_repository(request: IngestRequest, background_tasks: Background
                                 })
                             
                             # Upload
-                            moorcheh_manager.upload_entities(upload_items, namespace_name)
+                            moorcheh_manager.upload_entities(namespace_name, upload_items)
                             
                             stats["vectors_uploaded"] = len(upload_items)
                         else:
@@ -474,7 +483,7 @@ async def analyze_impact(request: AnalyzeRequest):
         entity_patterns = re.findall(r'\b([a-zA-Z0-9_\.]+)\b', request.query)
         # Filter out common stopwords if needed, but for now just search all candidates
         # that look "interesting" (len > 3)
-        potential_entities = {p for p in entity_patterns if len(p) > 3}
+        potential_entities = {p for p in entity_patterns if len(p) > 1}
         
         for entity_name in potential_entities:
             # Search for functions
@@ -488,6 +497,15 @@ async def analyze_impact(request: AnalyzeRequest):
             # Search for files
             files = graph_manager.find_file_by_name(entity_name)
             relevant_entities.extend([{"type": "File", **f} for f in files])
+
+            # Expand Files to their children (Functions/Classes) to get content
+            for f in files:
+                query = """
+                MATCH (f:File {path: $path})-[:CONTAINS]->(child)
+                RETURN child.name AS name, child.file_path AS file_path, labels(child)[0] AS type, child.repo_name AS repo_name
+                """
+                children = graph_manager.execute_cypher(query, {"path": f["file_path"]})
+                relevant_entities.extend(children)
             
             # Find dependents (what would break)
             deps = graph_manager.find_dependents(entity_name, max_depth=request.max_depth)
@@ -551,10 +569,25 @@ The question is:
         # Format the data for the prompt
         # Format the data for the prompt
         entities_str_list = []
+        # Normalize entities for response and prompt
+        normalized_entities = []
+        for e in relevant_entities:
+            meta = e.get('metadata', {})
+            norm = e.copy()
+            # Ensure keys exist
+            norm['name'] = e.get('name') or meta.get('name', 'N/A')
+            norm['type'] = e.get('type') or meta.get('type', 'Unknown')
+            norm['file_path'] = e.get('file_path') or meta.get('file_path', 'N/A')
+            normalized_entities.append(norm)
+            
+        relevant_entities = normalized_entities
+
+        # Format the data for the prompt
+        entities_str_list = []
         for e in relevant_entities[:10]:
-            name = e.get('name', 'N/A')
-            fpath = e.get('file_path', 'N/A')
-            etype = e.get('type', 'Unknown')
+            name = e['name']
+            fpath = e['file_path']
+            etype = e['type']
             
             content = ""
             meta = e.get('metadata', {})
@@ -566,21 +599,22 @@ The question is:
             
             # 3. Fetch content from Moorcheh (since files are deleted)
             if not content and fpath != 'N/A' and moorcheh_manager and moorcheh_manager.client:
-                 try:
-                      # Default namespace for now, or derive from known repo
-                      # We assume single repo context for this task: 'psf/requests'
-                      entity_namespace = "gitconnect-psf-requests"
+                try:
+                    # Default namespace for now, or derive from known repo
+                    entity_namespace = "gitconnect-psf-requests"
+                    if e.get('repo_name'):
+                        entity_namespace = f"gitconnect-{e['repo_name'].replace('/', '-').lower()}"
 
-                      if embeddings:
-                           name_vector = embeddings.embed_query(name)
-                           content = moorcheh_manager.fetch_content(
-                               file_path=fpath, 
-                               entity_name=name,
-                               namespace_name=entity_namespace,
-                               query_vector=name_vector
-                           )
-                 except Exception as fetch_err:
-                      logger.warning(f"Failed to fetch content from Moorcheh for {name}: {fetch_err}")
+                    if embeddings:
+                        name_vector = embeddings.embed_query(name)
+                        content = moorcheh_manager.fetch_content(
+                            file_path=fpath, 
+                            entity_name=name,
+                            namespace_name=entity_namespace,
+                            query_vector=name_vector
+                        )
+                except Exception as fetch_err:
+                    logger.warning(f"Failed to fetch content from Moorcheh for {name}: {fetch_err}")
 
             # Truncate content for prompt
             if content:

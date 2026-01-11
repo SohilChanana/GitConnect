@@ -115,31 +115,12 @@ class MoorchehManager:
                 with open("upload_debug.log", "a") as f:
                     f.write(f"ERROR: {err_msg}\n")
 
-    def fetch_content(self, file_path: str, entity_name: str) -> Optional[str]:
+    def fetch_content(self, file_path: str, entity_name: str, namespace_name: str, query_vector: List[float]) -> Optional[str]:
         """Fetch content for an entity from Moorcheh using its ID via search."""
         if not self.client:
             return None
             
         target_id = self.generate_id(file_path, entity_name)
-        # Assuming a default namespace or a way to determine it
-        # For now, let's assume we need to pass the namespace or have a default one
-        # This method needs to know which namespace to search in.
-        # For now, let's use a placeholder or assume it's passed.
-        # The original `upload_entities` and `search` methods take `namespace_name`.
-        # So, `fetch_content` should also take `namespace_name`.
-        # For the purpose of this edit, I'll add a placeholder for `namespace_name`
-        # and assume it's available or can be derived.
-        # Let's add it to the signature for correctness.
-        # For now, I'll use a dummy value or raise an error if not provided.
-        # The instruction didn't provide `namespace_name` in the signature,
-        # but it's crucial for Moorcheh operations.
-        # Given the context, I'll assume `get_namespace_name()` is a placeholder
-        # for how the namespace would be determined or passed.
-        # Since it's not defined, I'll make a note.
-        # For now, let's assume a default or that it's passed.
-        # The instruction's code had `namespace = self.get_namespace_name()`,
-        # which implies a method to get it. Since it's not provided, I'll
-        # keep the `NotImplementedError` for the search part.
 
         # The instruction's code for fetch_content had `namespace = self.get_namespace_name()`.
         # This method doesn't exist in the class.
