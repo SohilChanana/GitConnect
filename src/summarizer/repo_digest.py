@@ -11,6 +11,7 @@ from .schemas import DigestDocument, RepoDigest, RepoMeta
 
 
 README_CANDIDATES = [
+    "README",
     "README.md",
     "README.MD",
     "README.rst",

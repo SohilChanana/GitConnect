@@ -16,6 +16,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
 from pydantic import BaseModel, Field, validator
 import pydantic
@@ -29,6 +32,8 @@ from src.github_fetcher import GitHubFetcher, GitHubFetchError, fetch_repository
 from src.parser import CodeParser, parse_repository
 from src.graph_manager import GraphManager, GraphConnectionError
 from src.moorcheh_manager import MoorchehManager
+from src.summarizer.summarize_repo import summarize_repo_once
+from src.summarizer.schemas import SummaryReport
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -138,6 +143,13 @@ class IngestResponse(BaseModel):
     stats: Optional[dict] = None
 
 
+
+class SummaryRequest(BaseModel):
+    """Request model for repository summarization."""
+    repo_url: str = Field(..., description="GitHub repository URL")
+    prompt: str = Field("", description="Optional custom prompt for the summary")
+    use_grounding: bool = Field(True, description="Enable Google Search grounding")
+    model: Optional[str] = Field(None, description="Override Gemini model")
 
 
 class AnalyzeRequest(BaseModel):
@@ -766,6 +778,45 @@ async def execute_cypher(
     except Exception as e:
         logger.error(f"Query error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+
+@app.post("/summarize", response_model=SummaryReport)
+async def summarize_repository(request: SummaryRequest):
+    """Generate a one-shot summary of a GitHub repository using Gemini.
+    
+    This endpoint:
+    1. Clones the repository to a temporary directory
+    2. Builds a digest of the codebase (tree, README, top files)
+    3. Sends the digest to Gemini for analysis
+    4. Returns a structured report including viability verdict and tech stack
+    """
+    try:
+        # Run blocking clone & summarize in thread pool
+        loop = asyncio.get_running_loop()
+        
+        def _do_summary():
+            # Use fetcher context manager for auto-cleanup
+            with GitHubFetcher() as fetcher:
+                repo_path = fetcher.clone_repository(request.repo_url)
+                logger.info(f"Summarizing repo at: {repo_path}")
+                return summarize_repo_once(
+                    repo_url=request.repo_url,
+                    repo_root=repo_path,
+                    user_prompt=request.prompt,
+                    use_grounding=request.use_grounding,
+                    model=request.model,
+                )
+
+        report = await loop.run_in_executor(None, _do_summary)
+        return report
+
+    except GitHubFetchError as e:
+        logger.error(f"Summary fetch error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Summary error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Summary failed: {e}")
 
 
 # =============================================================================
