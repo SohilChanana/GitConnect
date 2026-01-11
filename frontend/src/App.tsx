@@ -2,6 +2,7 @@ import React from 'react';
 import { Sidebar } from './components/Sidebar';
 import { GraphCanvas } from './components/GraphCanvas';
 import { DetailsPanel } from './components/DetailsPanel';
+import { SummarySidebar } from './components/SummarySidebar';
 import './App.css';
 
 function App() {
@@ -11,6 +12,7 @@ function App() {
       <div className="flex-1 relative h-full">
         <GraphCanvas />
         <DetailsPanel />
+        <SummarySidebar />
       </div>
     </div>
   );
