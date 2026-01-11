@@ -52,15 +52,17 @@ export function GraphCanvas() {
           className="opacity-50"
         />
         <Controls className="bg-card border border-border text-foreground" />
+        {!useStore().isSummaryOpen && (
         <MiniMap 
           nodeStrokeColor="#333" 
           nodeColor="#1a1a1a"
           maskColor="rgba(0, 0, 0, 0.6)"
           className="bg-card border border-border rounded-lg overflow-hidden"
         />
+        )}
         
-        {/* Floating Panel for stats or legend (Top Right) */}
-        <Panel position="top-right" className="bg-card/50 backdrop-blur-md p-2 rounded-lg border border-white/5 text-xs text-muted-foreground mr-4 mt-4">
+        {/* Floating Panel for stats or legend (Moved to Top Left) */}
+        <Panel position="top-left" className="bg-card/50 backdrop-blur-md p-2 rounded-lg border border-white/5 text-xs text-muted-foreground ml-4 mt-4">
           <div>Nodes: {nodes.length}</div>
           <div>Edges: {edges.length}</div>
         </Panel>

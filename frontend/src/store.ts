@@ -46,6 +46,8 @@ interface AppState {
   deleteRepo: () => Promise<void>;
   init: () => Promise<void>;
   
+  isSummaryOpen: boolean;
+  setSummaryOpen: (isOpen: boolean) => void;
   addChatMessage: (message: ChatMessage) => void;
   clearChat: () => void;
 }
@@ -82,6 +84,9 @@ export const useStore = create<AppState>((set, get) => ({
   isLoading: false,
   isIngesting: false,
   currentRepoUrl: null,
+
+  isSummaryOpen: false,
+  setSummaryOpen: (isOpen: boolean) => set({ isSummaryOpen: isOpen }),
 
   sendUserMessage: async (content: string) => {
     const { chatHistory } = get();

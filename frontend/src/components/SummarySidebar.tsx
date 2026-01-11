@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, X, Loader2, Sparkles, AlertCircle, FileJson, CheckCircle2, ChevronDown } from 'lucide-react';
-import { api, type SummaryReport } from '../api';
+import { ChevronLeft, ChevronRight, Loader2, Sparkles, AlertCircle, FileJson, CheckCircle2, ChevronDown } from 'lucide-react';
+import { api } from '../api';
+import { useStore } from '../store';
 import { cn } from '../utils';
 
 export function SummarySidebar() {
-  const [isOpen, setIsOpen] = useState(false);
+  const { isSummaryOpen, setSummaryOpen } = useStore();
   const [repoUrl, setRepoUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<any>(null); // Weak type to allow accessing extra fields like citations
@@ -48,20 +49,20 @@ export function SummarySidebar() {
     <>
       {/* Toggle Button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setSummaryOpen(!isSummaryOpen)}
         className={cn(
           "absolute right-0 top-6 z-30 p-2 bg-black/60 backdrop-blur-md border hover:bg-white/10 transition-all duration-300 rounded-l-xl border-y border-l border-white/10",
-          isOpen ? "translate-x-0" : "translate-x-0" // Always visible
+          isSummaryOpen ? "translate-x-0" : "translate-x-0" // Always visible
         )}
       >
-        {isOpen ? <ChevronRight className="w-4 h-4 text-primary" /> : <ChevronLeft className="w-4 h-4 text-primary" />}
+        {isSummaryOpen ? <ChevronRight className="w-4 h-4 text-primary" /> : <ChevronLeft className="w-4 h-4 text-primary" />}
       </button>
 
       {/* Sidebar Panel */}
       <div
         className={cn(
             "absolute right-0 top-0 h-full w-[400px] bg-black/80 backdrop-blur-xl border-l border-white/5 shadow-2xl transition-transform duration-300 z-20 flex flex-col",
-            isOpen ? "translate-x-0" : "translate-x-full"
+            isSummaryOpen ? "translate-x-0" : "translate-x-full"
         )}
       >
         {/* Header */}
@@ -70,9 +71,6 @@ export function SummarySidebar() {
                 <Sparkles className="w-4 h-4 text-purple-400" />
                 <h2 className="font-medium text-sm tracking-tight text-foreground">Viability Assessment</h2>
             </div>
-            <button onClick={() => setIsOpen(false)} className="text-muted-foreground hover:text-foreground">
-                <X className="w-4 h-4" />
-            </button>
         </div>
 
         {/* Content */}

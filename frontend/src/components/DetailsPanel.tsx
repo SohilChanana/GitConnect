@@ -2,9 +2,9 @@ import { X, FileText, Activity, Code } from 'lucide-react';
 import { useStore } from '../store';
 
 export function DetailsPanel() {
-  const { selectedNodeId, setSelectedNodeId, nodes } = useStore();
+  const { selectedNodeId, setSelectedNodeId, nodes, isSummaryOpen } = useStore();
   
-  if (!selectedNodeId) return null;
+  if (!selectedNodeId || isSummaryOpen) return null;
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   if (!selectedNode) return null;
