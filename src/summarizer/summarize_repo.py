@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import logging
+
 import json
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,9 @@ from .viability_score import (
     merge_signals,
 )
 
+logger = logging.getLogger(__name__)
+
+
 
 def digest_to_text(digest: RepoDigest) -> str:
     """Flatten digest documents into a single string for the LLM."""
@@ -31,7 +35,9 @@ def digest_to_text(digest: RepoDigest) -> str:
 
 def summarize_repo_once(
     *,
+    api_key: str,
     repo_url: str,
+
     repo_root: Path,
     user_prompt: str = "",
     use_grounding: bool = True,
@@ -69,7 +75,9 @@ def summarize_repo_once(
     )
 
     raw = gemini_generate_json(
+        api_key=api_key,
         system_prompt=SUMMARY_SYSTEM_PROMPT,
+
         user_prompt=user_prompt_full,
         model=model,
         use_grounding=use_grounding,
@@ -79,7 +87,7 @@ def summarize_repo_once(
     try:
         report = SummaryReport.model_validate(raw)
     except Exception:
-        print("[gitconnect-summary] JSON invalid; running one repair pass...", file=sys.stderr)
+        logger.warning("JSON invalid; running one repair pass...")
         repair_user_prompt = (
             "Fix the previous response into STRICT valid JSON.\n"
             "Return ONLY one JSON object that matches the SummaryReport schema.\n"
@@ -91,7 +99,9 @@ def summarize_repo_once(
         )
 
         raw2 = gemini_generate_json(
+            api_key=api_key,
             system_prompt=SUMMARY_SYSTEM_PROMPT,
+
             user_prompt=repair_user_prompt,
             model=model,
             use_grounding=use_grounding,

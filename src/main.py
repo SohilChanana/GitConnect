@@ -117,6 +117,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"], # Allow frontend dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # =============================================================================
 # Request/Response Models
@@ -801,6 +811,7 @@ async def summarize_repository(request: SummaryRequest):
                 repo_path = fetcher.clone_repository(request.repo_url)
                 logger.info(f"Summarizing repo at: {repo_path}")
                 return summarize_repo_once(
+                    api_key=get_settings().gemini_api_key,
                     repo_url=request.repo_url,
                     repo_root=repo_path,
                     user_prompt=request.prompt,

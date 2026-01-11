@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from typing import Any, Dict, Optional
 
 import httpx
 
 
+
 class GeminiError(RuntimeError):
     """Raised when the Gemini API returns an error or non-JSON output."""
-
-
-def _env(name: str, default: Optional[str] = None) -> Optional[str]:
-    v = os.getenv(name)
-    return v if v not in (None, "") else default
 
 
 def _extract_json(text: str) -> str:
@@ -90,10 +87,10 @@ def _extract_json(text: str) -> str:
 
 def gemini_generate_json(
     *,
+    api_key: str,
     system_prompt: str,
     user_prompt: str,
     model: Optional[str] = None,
-    api_key_env: str = "GEMINI_API_KEY",
     use_grounding: bool = False,
     timeout_s: float = 60.0,
 ) -> Dict[str, Any]:
@@ -101,19 +98,14 @@ def gemini_generate_json(
 
     Uses the Generative Language REST API (generativelanguage.googleapis.com).
 
-    Env:
-      - GEMINI_API_KEY: API key
-      - GEMINI_MODEL: optional default model, e.g. 'gemini-2.0-flash'
-
     Grounding:
       If use_grounding=True, we add the Google Search tool in the request.
       Availability and billing depend on your Google plan.
     """
-    api_key = _env(api_key_env)
     if not api_key:
-        raise GeminiError(f"Missing {api_key_env} environment variable.")
+        raise GeminiError("Missing API key.")
 
-    model_name = model or _env("GEMINI_MODEL", "gemini-2.0-flash")
+    model_name = model or "gemini-2.0-flash"
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 

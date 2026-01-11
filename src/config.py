@@ -7,7 +7,9 @@ to configuration values using pydantic-settings.
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 
 class Settings(BaseSettings):
@@ -30,6 +32,10 @@ class Settings(BaseSettings):
 
     # Moorcheh API
     moorcheh_api_key: str
+
+    # Gemini API
+    gemini_api_key: str
+
 
     # GitHub (optional)
     github_token: Optional[str] = None
