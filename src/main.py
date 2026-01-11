@@ -448,6 +448,8 @@ async def analyze_impact(request: AnalyzeRequest):
     # Define primary namespace (defaulting to psf-requests for this task context)
     primary_namespace = "gitconnect-psf-requests"
     
+    moorcheh_manager: Optional[MoorchehManager] = getattr(app.state, "moorcheh_manager", None)
+
     try:
         relevant_entities = []
         dependencies = []
@@ -457,7 +459,6 @@ async def analyze_impact(request: AnalyzeRequest):
         # Step 1: Vector search for relevant entities (if enabled)
         if request.use_vector_search:
             try:
-                moorcheh_manager: MoorchehManager = app.state.moorcheh_manager
                 if moorcheh_manager:
                     logger.info(f"Performing vector search for: '{request.query}'")
                     query_embedding = embeddings.embed_query(request.query)
@@ -501,11 +502,26 @@ async def analyze_impact(request: AnalyzeRequest):
         # Step 2: Extract entity names from query for direct search
         # Look for capitalized words (Classes/Functions) or words with file extensions or snake_case
         import re
+        
+        # Stopwords to ignore
+        STOPWORDS = {'what', 'where', 'how', 'when', 'why', 'who', 'is', 'are', 'the', 'a', 'an', 
+                     'in', 'on', 'of', 'for', 'to', 'from', 'does', 'do', 'can', 'could', 'should', 
+                     'would', 'list', 'show', 'tell', 'me', 'about', 'finding', 'find', 'functionality', 'describe'}
+
         # Matches: CapitalizedWords, words.with.extensions, or snake_case_words
-        entity_patterns = re.findall(r'\b([a-zA-Z0-9_\.]+)\b', request.query)
-        # Filter out common stopwords if needed, but for now just search all candidates
-        # that look "interesting" (len > 3)
-        potential_entities = {p for p in entity_patterns if len(p) > 1}
+        # Refined regex to be more specific to code identifiers
+        # 1. Words with dots (file.py)
+        # 2. PascalCase/CamelCase (UserAuth, getRequest)
+        # 3. snake_case (user_auth) - requires at least one underscore
+        entity_patterns = re.findall(r'\b([a-zA-Z0-9_\.]*[a-zA-Z0-9]+\.[a-zA-Z0-9]+|[A-Z][a-zA-Z0-9]*|[a-z0-9]+_[a-z0-9_]+)\b', request.query)
+        
+        # Filter out stopwords and short words
+        potential_entities = {p for p in entity_patterns if len(p) > 2 and p.lower() not in STOPWORDS}
+        
+        # If no specific patterns found, fallback to simpler word extraction but still apply stopwords
+        if not potential_entities:
+             words = re.findall(r'\b([a-zA-Z0-9_\.]+)\b', request.query)
+             potential_entities = {w for w in words if len(w) > 3 and w.lower() not in STOPWORDS}
         
         for entity_name in potential_entities:
             # Search for functions
@@ -570,7 +586,7 @@ The question is:
                     return_intermediate_steps=True,
                     allow_dangerous_requests=True,
                     cypher_prompt=cypher_prompt,
-                    top_k=100,
+                    top_k=200, # Increased limit for "list all" queries
                 )
                 
                 chain_result = cypher_chain.invoke({"query": request.query})
@@ -580,7 +596,7 @@ The question is:
                     # Check for truncation in context (step 1)
                     if len(intermediate_steps) > 1:
                         context = intermediate_steps[1].get("context", [])
-                        if len(context) >= 100:  # Matches top_k=100
+                        if len(context) >= 200: 
                             truncation_warning = f"Results were truncated to {len(context)} items. Some data may be missing."
                 
             except Exception as e:
@@ -593,56 +609,113 @@ The question is:
         entities_str_list = []
         # Normalize entities for response and prompt
         normalized_entities = []
+        seen_entities = set() # Deduplicate
+        
         for e in relevant_entities:
             meta = e.get('metadata', {})
             norm = e.copy()
             # Ensure keys exist
-            norm['name'] = e.get('name') or meta.get('name', 'N/A')
+            # Fix: For File nodes, name might be missing (graph manager returns file_path)
+            raw_name = e.get('name') or meta.get('name')
+            file_path = e.get('file_path') or meta.get('file_path', 'N/A')
+            
+            if not raw_name and e.get('type') == 'File':
+                raw_name = file_path.split('/')[-1]
+            
+            norm['name'] = raw_name or 'N/A'
             norm['type'] = e.get('type') or meta.get('type', 'Unknown')
-            norm['file_path'] = e.get('file_path') or meta.get('file_path', 'N/A')
-            normalized_entities.append(norm)
+            norm['file_path'] = file_path
+            
+            # Unique ID for deduplication
+            uid = f"{norm['type']}:{norm['file_path']}:{norm['name']}"
+            if uid not in seen_entities:
+                normalized_entities.append(norm)
+                seen_entities.add(uid)
             
         relevant_entities = normalized_entities
 
         # Format the data for the prompt
         entities_str_list = []
-        for e in relevant_entities[:10]:
-            name = e['name']
-            fpath = e['file_path']
-            etype = e['type']
-            
-            content = ""
+        
+        # INCREASED LIMIT: Show up to 50 entities
+        # LOGIC: Include code content only for top 10 to save tokens, but list others
+        
+        # Optimization: Batch fetch content for top 3 to avoid serial API calls AND rate limits
+        top_entities = relevant_entities[:3]
+        items_to_fetch = []
+        
+        # Identify items needing content fetch
+        for i, e in enumerate(top_entities):
             meta = e.get('metadata', {})
-            # 1. Try Moorcheh Metadata
+            content = None
             if isinstance(meta, dict) and 'content' in meta:
                 content = meta['content']
-            elif 'content' in e and e['content']: # 2. Try Entity Dict (e.g. from previous logic)
+            elif 'content' in e and e['content']:
                 content = e['content']
             
-            # 3. Fetch content from Moorcheh (since files are deleted)
-            if not content and fpath != 'N/A' and moorcheh_manager and moorcheh_manager.client:
-                try:
-                    # Default namespace for now, or derive from known repo
+            # If no content, mark for fetching
+            if not content and e['file_path'] != 'N/A' and moorcheh_manager and moorcheh_manager.client:
+                items_to_fetch.append((i, e))
+        
+        if items_to_fetch and embeddings:
+            try:
+                # 1. Batch Embeddings (1 API Call)
+                names_to_embed = [item[1].get('name', 'N/A') for item in items_to_fetch]
+                logger.info(f"Batch embedding {len(names_to_embed)} entity names for content search...")
+                vectors = embeddings.embed_documents(names_to_embed)
+                
+                # 2. Parallel Fetch from Moorcheh
+                loop = asyncio.get_running_loop()
+                fetch_tasks = []
+                
+                for idx, (original_index, e) in enumerate(items_to_fetch):
+                    # Default namespace or derive
                     entity_namespace = "gitconnect-psf-requests"
                     if e.get('repo_name'):
                         entity_namespace = f"gitconnect-{e['repo_name'].replace('/', '-').lower()}"
+                    
+                    # Create coroutine wrapper for sync call
+                    task = loop.run_in_executor(
+                        None, 
+                        moorcheh_manager.fetch_content,
+                        e['file_path'],
+                        e.get('name', 'N/A'),
+                        entity_namespace,
+                        vectors[idx]
+                    )
+                    fetch_tasks.append(task)
+                
+                if fetch_tasks:
+                    logger.info(f"Executing {len(fetch_tasks)} parallel content fetches from Moorcheh...")
+                    fetched_contents = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                    
+                    # Apply results back to relevant_entities
+                    for idx, result in enumerate(fetched_contents):
+                        original_index = items_to_fetch[idx][0]
+                        if isinstance(result, Exception):
+                            logger.warning(f"Error fetching content for item {original_index}: {result}")
+                        elif result:
+                            # Update the entity in the main list
+                            relevant_entities[original_index]['content'] = result
+            except Exception as batch_err:
+                 logger.error(f"Batch content fetch failed: {batch_err}")
 
-                    if embeddings:
-                        name_vector = embeddings.embed_query(name)
-                        content = moorcheh_manager.fetch_content(
-                            file_path=fpath, 
-                            entity_name=name,
-                            namespace_name=entity_namespace,
-                            query_vector=name_vector
-                        )
-                except Exception as fetch_err:
-                    logger.warning(f"Failed to fetch content from Moorcheh for {name}: {fetch_err}")
+        # Final Formatting Loop
+        for i, e in enumerate(relevant_entities[:50]):
+            name = e.get('name', 'N/A')
+            fpath = e['file_path']
+            etype = e['type']
+            
+            content = e.get('content') # Should be populated now
+            if not content:
+                 meta = e.get('metadata', {})
+                 content = meta.get('content') if isinstance(meta, dict) else None
 
-            # Truncate content for prompt
-            if content:
+            # Truncate content for prompt (only show for top 10)
+            if i < 10 and content:
                 content_snippet = f"\nCode:\n```\n{content[:2000]}...\n```"
             else:
-                content_snippet = " (Code content not available)"
+                content_snippet = "" # No content for items 11-50 or if missing
                 
             entities_str_list.append(f"- {etype}: {name} in {fpath}{content_snippet}")
 
@@ -755,6 +828,18 @@ Please provide the answer.""")
                 f.write(f"\n\nCypher Query: {cypher_query}")
         logger.error(f"Analysis error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+
+@app.get("/repo")
+async def get_current_repo():
+    """Get the currently ingested repository name."""
+    graph_manager: GraphManager = app.state.graph_manager
+    try:
+        repo_name = graph_manager.get_current_repo()
+        return {"status": "success", "repo_name": repo_name}
+    except Exception as e:
+        logger.error(f"Get repo error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/stats")

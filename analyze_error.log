@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "C:\Users\schan\Documents\GitConnect_Test\src\main.py", line 697, in analyze_impact
+    if moorcheh_manager and moorcheh_manager.client and primary_namespace:
+       ^^^^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'moorcheh_manager' where it is not associated with a value
+
+
+Cypher Query: cypher
+MATCH (c:Class)
+RETURN c

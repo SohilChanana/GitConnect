@@ -499,6 +499,18 @@ class GraphManager:
         
         return stats
 
+    def get_current_repo(self) -> Optional[str]:
+        """Get the name of the currently ingested repository.
+        
+        Returns:
+            The repository name if one exists, else None.
+        """
+        query = "MATCH (f:File) RETURN f.repo_name AS repo_name LIMIT 1"
+        with self.session() as session:
+            result = session.run(query)
+            record = result.single()
+            return record["repo_name"] if record else None
+
     # =========================================================================
     # Vector Search (for embeddings)
     # =========================================================================
