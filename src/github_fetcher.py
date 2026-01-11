@@ -119,8 +119,14 @@ class GitHubFetcher:
         logger.info(f"Cloning repository {owner}/{repo_name} to {clone_path}")
         
         try:
-            # Clone with optional shallow depth
-            clone_kwargs = {"depth": 1} if shallow else {}
+            # Clone with optional shallow depth and single branch for speed
+            clone_kwargs = {"depth": 1, "single_branch": True} if shallow else {}
+            
+            if shallow:
+                logger.info(f"Shallow cloning {owner}/{repo_name} (depth=1, single branch)...")
+            else:
+                logger.info(f"Cloning full repository {owner}/{repo_name}...")
+
             Repo.clone_from(auth_url, clone_path, **clone_kwargs)
             logger.info(f"Successfully cloned {owner}/{repo_name}")
             return clone_path

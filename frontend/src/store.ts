@@ -229,14 +229,28 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   deleteRepo: async () => {
+    const { currentRepoUrl } = get();
+    if (!currentRepoUrl) return;
+
     try {
-      await api.deleteRepo();
+      // Extract repo name from URL or use it directly if it's already just the name
+      // Logic: If it contains 'github.com', extract name. Else assume it is the name.
+      // Backend expects 'owner/repo'.
+      let repoName = currentRepoUrl;
+      if (currentRepoUrl.includes('github.com')) {
+          const parts = currentRepoUrl.split('github.com/');
+          repoName = parts[1].replace('.git', '');
+      }
+      
+      await api.deleteRepo(repoName);
       set({ 
         currentRepoUrl: null, 
         chatHistory: [], 
         nodes: [], 
         edges: [] 
       });
+      // Refresh status from backend to verify deletion
+      await get().init();
     } catch (error) {
       console.error("Delete Error:", error);
     }
@@ -244,9 +258,13 @@ export const useStore = create<AppState>((set, get) => ({
 
   init: async () => {
     try {
-      const status = await api.getStatus();
-      if (status.repo_url) {
-        set({ currentRepoUrl: status.repo_url });
+      // Check if backend has a repo loaded
+      const status = await api.getRepo();
+      if (status.repo_name) {
+        // Backend returns "psf/requests", frontend expects a URL-like string for display logic usually,
+        // but Sidebar handles "psf/requests" decently by just displaying it.
+        // Let's set it to the name.
+        set({ currentRepoUrl: status.repo_name });
         // Optionally fetch initial graph stats or greeting here
       }
     } catch (error) {

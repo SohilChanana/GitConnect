@@ -68,14 +68,16 @@ export const api = {
   },
 
   // Get Repo Status
-  getStatus: async () => {
-    const res = await axios.get(`${API_BASE_URL}/status`);
+  getRepo: async () => {
+    const res = await axios.get(`${API_BASE_URL}/repo`);
     return res.data;
   },
 
   // Delete/Reset Repo
-  deleteRepo: async () => {
-    const res = await axios.delete(`${API_BASE_URL}/delete`);
+  deleteRepo: async (repoName: string) => {
+    // repoName might contain slashes (owner/repo), so encode it if needed, 
+    // but FastAPI path param {repo_name:path} handles slashes well.
+    const res = await axios.delete(`${API_BASE_URL}/repos/${repoName}`);
     return res.data;
   },
 
