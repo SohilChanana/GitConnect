@@ -63,7 +63,6 @@ class MoorchehManager:
         """
         try:
             logger.info(f"Deleting Moorcheh namespace '{name}'...")
-            # Using basic delete method from SDK patterns
             self.client.namespaces.delete(namespace_name=name)
             logger.info(f"Successfully deleted namespace '{name}'")
         except Exception as e:
@@ -101,15 +100,9 @@ class MoorchehManager:
                     namespace_name=namespace_name,
                     vectors=batch
                 )
-                msg = f"Uploaded batch {i//batch_size + 1}/{(total+batch_size-1)//batch_size} to Moorcheh"
-                logger.info(msg)
-                with open("upload_debug.log", "a") as f:
-                    f.write(f"SUCCESS: {msg}\n")
+                logger.info(f"Uploaded batch {i//batch_size + 1}/{(total+batch_size-1)//batch_size} to Moorcheh")
             except Exception as e:
-                err_msg = f"Failed to upload batch to Moorcheh: {e}"
-                logger.error(err_msg)
-                with open("upload_debug.log", "a") as f:
-                    f.write(f"ERROR: {err_msg}\n")
+                logger.error(f"Failed to upload batch to Moorcheh: {e}")
 
     def fetch_content(self, file_path: str, entity_name: str, namespace_name: str, query_vector: List[float]) -> Optional[str]:
         """Fetch content for an entity from Moorcheh using its ID via search."""
@@ -127,7 +120,6 @@ class MoorchehManager:
             )
             
             for r in results:
-                # Check for ID match
                 if r.get('id') == target_id:
                     # Content might be in 'content' key or metadata
                     content = r.get('content')
@@ -162,7 +154,6 @@ class MoorchehManager:
                 top_k=top_k
             )
             
-            # Handle response (SearchResponse object or dict)
             results = []
             if hasattr(response, 'results'):
                 results = response.results
@@ -172,7 +163,6 @@ class MoorchehManager:
             # Parse results to standard format
             parsed_results = []
             for res in results:
-                # Convert to dict if object
                 item = res.dict() if hasattr(res, 'dict') else dict(res)
                 parsed_results.append(item)
                 

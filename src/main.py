@@ -303,14 +303,11 @@ async def ingest_repository(request: IngestRequest, background_tasks: Background
                                 f"Parent Class: {func.parent_class or 'None'}\n"
                                 f"\n{func.content}"  # Assuming content isn't too massive; maybe truncate if needed
                             )
-                            # Truncate content if massive to avoid token limits (optional basic safety)
                             if len(rich_text) > 8000:
                                 rich_text = rich_text[:8000] + "...(truncated)"
                                 
                             item_id = moorcheh_manager.generate_id(func.file_path, func.name)
                             
-                            # Truncate content for metadata storage (Moorcheh/Vectors usually handle large text, but let's be safe)
-                            # 15000 chars is roughly 3-4k tokens.
                             stored_content = func.content[:15000] if func.content else ""
                             
                             entities_to_embed.append({
@@ -403,9 +400,6 @@ async def ingest_repository(request: IngestRequest, background_tasks: Background
         logger.error(f"Graph connection error: {e}")
         raise HTTPException(status_code=503, detail=f"Database error: {e}")
     except Exception as e:
-        import traceback
-        with open("ingest_error.log", "w") as f:
-            f.write(traceback.format_exc())
         logger.error(f"Ingestion error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
@@ -445,7 +439,6 @@ async def analyze_impact(request: AnalyzeRequest):
     llm: ChatOpenAI = app.state.llm
     neo4j_graph: Optional[Neo4jGraph] = app.state.neo4j_graph
     
-    # Define primary namespace (defaulting to psf-requests for this task context)
     primary_namespace = "gitconnect-psf-requests"
     
     moorcheh_manager: Optional[MoorchehManager] = getattr(app.state, "moorcheh_manager", None)
