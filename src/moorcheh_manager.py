@@ -19,10 +19,6 @@ class MoorchehManager:
         """Initialize Moorcheh client."""
         settings = get_settings()
         try:
-            # Passing api_key directly avoids needing it in OS env vars if SDK supports it
-            # The docs say it reads from env, but let's assume we might need to pass it or set it.
-            # Usually SDKs allow passing api_key to constructor.
-            # If not, we might need to os.environ["MOORCHEH_API_KEY"] = settings.moorcheh_api_key
             self.client = MoorchehClient(api_key=settings.moorcheh_api_key)
             logger.info("Moorcheh client initialized")
         except Exception as e:
@@ -121,12 +117,6 @@ class MoorchehManager:
             return None
             
         target_id = self.generate_id(file_path, entity_name)
-
-        # The instruction's code for fetch_content had `namespace = self.get_namespace_name()`.
-        # This method doesn't exist in the class.
-        # To make the provided code syntactically correct, I will comment out or
-        # replace `self.get_namespace_name()` with a placeholder or a direct namespace.
-        # Given the `search` method requires `namespace_name`, `fetch_content` should too.
         
         try:
             # Search using the vector of the entity name
@@ -166,16 +156,6 @@ class MoorchehManager:
             List of dictionaries representing the found entities.
         """
         try:
-            # client.vectors.search might be the method or client.search.query
-            # Based on docs earlier: client.vectors.search or similar.
-            # Let's use the 'search' generic method or explore based on assumed SDK structure from research.
-            # Research said: client.vectors.search(namespace_name=..., vector=..., top_k=...)
-            # Wait, docs said: client.search.query(...) for search & discovery?
-            # Let's assume standard vector search pattern from SDKs. 
-            # If 404/error, I will fix.
-            
-            # Use client.search(namespaces=[...], query=...)
-            # Note: query can be vector (list[float])
             response = self.client.search(
                 namespaces=[namespace_name],
                 query=query_vector,

@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
         openai_api_key=settings.openai_api_key,
     )
     app.state.llm = ChatOpenAI(
-        model="gpt-4o-mini",
+        model="gpt-5-nano",
         temperature=0,
         openai_api_key=settings.openai_api_key,
     )
@@ -463,19 +463,7 @@ async def analyze_impact(request: AnalyzeRequest):
                     logger.info(f"Performing vector search for: '{request.query}'")
                     query_embedding = embeddings.embed_query(request.query)
                     
-                    # Search across known namespaces? Or just search all?
-                    # For now, we need to know the namespace. 
-                    # Assuming we know which repo we are analyzing, or we search a "default" one?
-                    # The current request doesn't specify repo!
-                    # Currently strict GraphRAG usually implies context.
-                    # Let's assume we search namespaces matching 'gitconnect-*' or we ask user for repo?
-                    # For this Hackathon implementation, we might need to iterate or stick to one.
-                    # Let's list namespaces and search them?
-                    # Or simpler: Is there a way to search *all*?
-                    # Moorcheh might support it. If not, we iterate known namespaces from Neo4j?
                     
-                    # For efficiency in this demo, let's fetch unique repo_names from graph manager
-                    # and search those namespaces.
                     repos = graph_manager.execute_cypher("MATCH (f:File) RETURN DISTINCT f.repo_name as repo")
                     repo_names = [r['repo'] for r in repos]
                     
@@ -485,7 +473,7 @@ async def analyze_impact(request: AnalyzeRequest):
                         results = moorcheh_manager.search(
                             query_embedding, 
                             namespace_name=ns_name,
-                            top_k=5
+                            top_k=20
                         )
                         all_vector_results.extend(results)
                     
@@ -523,6 +511,11 @@ async def analyze_impact(request: AnalyzeRequest):
              words = re.findall(r'\b([a-zA-Z0-9_\.]+)\b', request.query)
              potential_entities = {w for w in words if len(w) > 3 and w.lower() not in STOPWORDS}
         
+        # Add vector search results to potential entities for dependency lookup
+        for e in relevant_entities:
+            if e.get('name'):
+                potential_entities.add(e['name'])
+
         for entity_name in potential_entities:
             # Search for functions
             funcs = graph_manager.find_function_by_name(entity_name)
@@ -615,7 +608,6 @@ The question is:
             meta = e.get('metadata', {})
             norm = e.copy()
             # Ensure keys exist
-            # Fix: For File nodes, name might be missing (graph manager returns file_path)
             raw_name = e.get('name') or meta.get('name')
             file_path = e.get('file_path') or meta.get('file_path', 'N/A')
             
@@ -637,10 +629,6 @@ The question is:
         # Format the data for the prompt
         entities_str_list = []
         
-        # INCREASED LIMIT: Show up to 50 entities
-        # LOGIC: Include code content only for top 10 to save tokens, but list others
-        
-        # Optimization: Batch fetch content for top 3 to avoid serial API calls AND rate limits
         top_entities = relevant_entities[:3]
         items_to_fetch = []
         
@@ -706,12 +694,12 @@ The question is:
             fpath = e['file_path']
             etype = e['type']
             
-            content = e.get('content') # Should be populated now
+            content = e.get('content')
             if not content:
                  meta = e.get('metadata', {})
                  content = meta.get('content') if isinstance(meta, dict) else None
 
-            # Truncate content for prompt (only show for top 10)
+            # Truncate content for prompt
             if i < 10 and content:
                 content_snippet = f"\nCode:\n```\n{content[:2000]}...\n```"
             else:
@@ -724,7 +712,7 @@ The question is:
         # Format dependencies
         deps_str = "\n".join([
             f"- {d.get('type', 'Unknown')}: {d.get('name', 'N/A')} (line {d.get('line', 'N/A')})"
-            for d in dependencies[:20]  # Limit to avoid token overflow
+            for d in dependencies[:50]  # Increased limit for better context
         ]) or "No dependencies found"
         
         # Build Context for Moorcheh
@@ -753,8 +741,8 @@ Graph Query Insights:
                        "query": request.query,
                        "answer": response['answer'],
                        "cypher_query": cypher_query,
-                       "relevant_entities": relevant_entities[:10],
-                       "dependencies": dependencies[:20],
+                       "relevant_entities": relevant_entities[:50],
+                       "dependencies": dependencies[:50],
                        "truncation_warning": truncation_warning
                   }
              except Exception as gen_err:
